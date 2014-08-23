@@ -77,11 +77,14 @@
                                  SDC_SSI_FSS)
 
 #define USE_DMA_TX
-void init_dma(void);
-uint32_t sector_send_dma(uint8_t *buff, uint32_t len);
-static uint32_t dma_complete=0;
-static uint8_t rxbuff[512];
+#define USE_DMA_RX
 
+void init_dma(uint8_t send);
+uint32_t sector_send_dma(uint8_t *buff, uint32_t len);
+uint32_t sector_receive_dma(uint8_t *buff, uint32_t len);
+static uint32_t dma_complete=0;
+static uint8_t dummy_rx = 0x00;
+static uint8_t dummy_tx = 0xff;
 
 // asserts the CS pin to the card
 static
@@ -309,10 +312,14 @@ BOOL rcvr_datablock (
     } while ((token == 0xFF) && Timer1);
     if(token != 0xFE) return FALSE;    /* If not valid data token, retutn with error */
 
+#if defined(USE_DMA_RX)
+    	sector_receive_dma((uint8_t*)buff, 512);
+#else
     do {                            /* Receive the data block into buffer */
         rcvr_spi_m(buff++);
         rcvr_spi_m(buff++);
     } while (btr -= 2);
+#endif
     rcvr_spi();                        /* Discard CRC */
     rcvr_spi();
 
@@ -816,17 +823,63 @@ sector_send_dma(uint8_t *buff, uint32_t len)
     dma_complete = 0;
 
 	/* Re-initialize DMA every transmission */
-	init_dma();
+	init_dma(1);
 
     ROM_uDMAChannelTransferSet(SDC_SSI_RX_UDMA_CHAN | UDMA_PRI_SELECT,
                                UDMA_MODE_BASIC,
                                (void *)(SSI0_BASE + SSI_O_DR),
-                               rxbuff,
+                               &dummy_rx,
                                len /*512*/);
 
 	ROM_uDMAChannelTransferSet(SDC_SSI_TX_UDMA_CHAN | UDMA_PRI_SELECT,
 								   UDMA_MODE_BASIC,
 								   buff,
+								   (void *)(SDC_SSI_BASE + SSI_O_DR),
+								   len);
+
+	/* Initiate DMA txfer */
+    ROM_uDMAChannelEnable(SDC_SSI_RX_UDMA_CHAN);
+	ROM_uDMAChannelEnable(SDC_SSI_TX_UDMA_CHAN);
+
+	while (!dma_complete);
+
+
+	while(1)
+	{
+		/* Double-check to make sure DMA txfer is done (can probably remove) */
+		uint32_t evFlags = ROM_uDMAChannelModeGet(SDC_SSI_RX_UDMA_CHAN | UDMA_PRI_SELECT);
+		if (evFlags==UDMA_MODE_STOP) break;
+	}
+
+	//for (discard=100; discard; discard--);
+
+	ROM_uDMAChannelDisable(SDC_SSI_RX_UDMA_CHAN);
+	ROM_uDMAChannelDisable(SDC_SSI_TX_UDMA_CHAN);
+	ROM_SSIDMADisable(SDC_SSI_BASE, SSI_DMA_TX | SSI_DMA_RX);
+
+	return 0;
+}
+
+unsigned int
+sector_receive_dma(uint8_t *buff, uint32_t len)
+{
+
+	volatile uint32_t discard;
+
+	dma_complete = 0;
+
+	/* Re-initialize DMA every transmission */
+	init_dma(0);
+
+    ROM_uDMAChannelTransferSet(SDC_SSI_RX_UDMA_CHAN | UDMA_PRI_SELECT,
+                               UDMA_MODE_BASIC,
+                               (void *)(SSI0_BASE + SSI_O_DR),
+                               buff,
+                               len /*512*/);
+
+	ROM_uDMAChannelTransferSet(SDC_SSI_TX_UDMA_CHAN | UDMA_PRI_SELECT,
+								   UDMA_MODE_BASIC,
+								   &dummy_tx,
 								   (void *)(SDC_SSI_BASE + SSI_O_DR),
 								   len);
 
@@ -853,26 +906,46 @@ sector_send_dma(uint8_t *buff, uint32_t len)
 }
 
 void
-init_dma(void)
+init_dma(uint8_t send)
 {
 
     /* Init SPI DMA & SPI interrupt */
     ROM_SSIDMAEnable(SDC_SSI_BASE, SSI_DMA_TX | SSI_DMA_RX);
     ROM_IntEnable(SDC_SSI_INT);
 
-    /* RX */
-    ROM_uDMAChannelAttributeDisable(SDC_SSI_RX_UDMA_CHAN, UDMA_ATTR_ALL);
-    ROM_uDMAChannelControlSet(SDC_SSI_RX_UDMA_CHAN | UDMA_PRI_SELECT,
-                              UDMA_SIZE_8 | UDMA_SRC_INC_NONE | UDMA_DST_INC_8 | UDMA_ARB_4);
+    if (send) {
 
-    /* TX */
-    ROM_uDMAChannelAttributeDisable(SDC_SSI_TX_UDMA_CHAN,
-                                        UDMA_ATTR_ALTSELECT |
-                                        UDMA_ATTR_HIGH_PRIORITY |
-                                        UDMA_ATTR_REQMASK);
-    ROM_uDMAChannelControlSet(SDC_SSI_TX_UDMA_CHAN | UDMA_PRI_SELECT,
-                                  UDMA_SIZE_8 | UDMA_SRC_INC_8 | UDMA_DST_INC_NONE |
-                                  UDMA_ARB_4);
+    	/* RX */
+    	ROM_uDMAChannelAttributeDisable(SDC_SSI_RX_UDMA_CHAN, UDMA_ATTR_ALL);
+    	ROM_uDMAChannelControlSet(SDC_SSI_RX_UDMA_CHAN | UDMA_PRI_SELECT,
+    							  UDMA_SIZE_8 | UDMA_SRC_INC_NONE | UDMA_DST_INC_NONE | UDMA_ARB_4);
+
+		/* TX */
+		ROM_uDMAChannelAttributeDisable(SDC_SSI_TX_UDMA_CHAN,
+											UDMA_ATTR_ALTSELECT |
+											UDMA_ATTR_HIGH_PRIORITY |
+											UDMA_ATTR_REQMASK);
+		ROM_uDMAChannelControlSet(SDC_SSI_TX_UDMA_CHAN | UDMA_PRI_SELECT,
+									  UDMA_SIZE_8 | UDMA_SRC_INC_8 | UDMA_DST_INC_NONE |
+									  UDMA_ARB_4);
+    }
+    else { /* receive */
+
+    	/* RX */
+    	ROM_uDMAChannelAttributeDisable(SDC_SSI_RX_UDMA_CHAN, UDMA_ATTR_ALL);
+    	ROM_uDMAChannelControlSet(SDC_SSI_RX_UDMA_CHAN | UDMA_PRI_SELECT,
+    							  UDMA_SIZE_8 | UDMA_SRC_INC_NONE | UDMA_DST_INC_8 | UDMA_ARB_4);
+
+
+		/* TX */
+		ROM_uDMAChannelAttributeDisable(SDC_SSI_TX_UDMA_CHAN,
+											UDMA_ATTR_ALTSELECT |
+											UDMA_ATTR_HIGH_PRIORITY |
+											UDMA_ATTR_REQMASK);
+		ROM_uDMAChannelControlSet(SDC_SSI_TX_UDMA_CHAN | UDMA_PRI_SELECT,
+									  UDMA_SIZE_8 | UDMA_SRC_INC_NONE | UDMA_DST_INC_NONE |
+									  UDMA_ARB_4);
+    }
 
     /* Clear SSI0 FIFO just to be safe */
     while((HWREG(SSI0_BASE + SSI_O_SR) & SSI_SR_RNE))
