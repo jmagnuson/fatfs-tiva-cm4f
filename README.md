@@ -13,6 +13,6 @@ The target architecture is ARM Cortex-M4, and was developed for TI's
 ## To-do
 
 - Add FreeRTOS process-yielding support.
-- Add DMA read functionality.
+- Implement and test scatter-gather transport method.
 - Modify DMA interrupt to re-initialize itself for multi-block transfers.
 - Add sample project for testing.
