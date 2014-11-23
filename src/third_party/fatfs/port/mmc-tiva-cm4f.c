@@ -20,6 +20,7 @@
 #include "inc/hw_types.h"
 #include "inc/hw_ints.h"
 #include "inc/hw_ssi.h"
+#include "inc/hw_udma.h"
 #include "driverlib/gpio.h"
 #include "driverlib/rom.h"
 #include "driverlib/ssi.h"
@@ -85,6 +86,41 @@ uint32_t sector_receive_dma(uint8_t *buff, uint32_t len);
 static uint32_t dma_complete=0;
 static uint8_t dummy_rx = 0x00;
 static uint8_t dummy_tx = 0xff;
+
+static uint8_t token_stat = 0xfc;
+static uint8_t *buff_ptr = 0x00; /* Gets changed dynamically */
+static uint8_t crc_and_response[2] = {0xff, 0xff};//, 0xff}; /* only handle crc for now */
+static tDMAControlTable dma_send_sg_list[3] =
+{
+    /* Token (1) */
+    uDMATaskStructEntry(1, UDMA_SIZE_8,
+                        UDMA_SRC_INC_8, &token_stat,
+                        UDMA_DST_INC_NONE,
+                        (void *)(SDC_SSI_BASE + SSI_O_DR),
+                        UDMA_ARB_4, UDMA_MODE_PER_SCATTER_GATHER),
+    /* Sector buffer (512) */
+    uDMATaskStructEntry(512, UDMA_SIZE_8,
+                        UDMA_SRC_INC_8, 0, /* Needs set_sg_list_buff() to set */
+                        UDMA_DST_INC_NONE,
+                        (void *)(SDC_SSI_BASE + SSI_O_DR),
+                        UDMA_ARB_4, UDMA_MODE_PER_SCATTER_GATHER),
+    /* Fake CRC + response (3) */
+    uDMATaskStructEntry(2, UDMA_SIZE_8,
+                        UDMA_SRC_INC_8, crc_and_response,
+                        UDMA_DST_INC_NONE,
+                        (void *)(SDC_SSI_BASE + SSI_O_DR),
+                        UDMA_ARB_4, UDMA_MODE_BASIC) /* BASIC because last task */
+
+};
+
+static
+void set_sg_list_buff(uint8_t* buff)
+{
+    /* Snippet out of uDMATaskStructEntry which only sets SrcEndAddr */
+    dma_send_sg_list[1].pvSrcEndAddr =
+        ((void *)(&((uint8_t *)(buff))[((512)
+        <<  ((UDMA_SRC_INC_8) >> 26)) - 1]));
+}
 
 // asserts the CS pin to the card
 static
@@ -344,24 +380,31 @@ BOOL xmit_datablock (
 
     if (wait_ready() != 0xFF) return FALSE;
 
-    xmit_spi(token);                    /* Xmit data token */
+
     if (token != 0xFD) {    /* Is data token */
         wc = 0;
+
+        token_stat = token;
 
 #if defined(USE_DMA_TX)
         sector_send_dma((uint8_t*)buff, 512);
 #else
+        xmit_spi(token);                    /* Xmit data token */
         do {                            /* Xmit the 512 byte data block to MMC */
             xmit_spi(*buff++);
             xmit_spi(*buff++);
         } while (--wc);
-#endif
+
         xmit_spi(0xFF);                    /* CRC (Dummy) */
         xmit_spi(0xFF);
+#endif
         resp = rcvr_spi();
         if ((resp & 0x1F) != 0x05) {    /* If not accepted, return with error */
             return FALSE;
         }
+    }
+    else { /* token == 0xFD */
+        xmit_spi(token);                    /* Xmit data token */
     }
 
 
@@ -825,17 +868,20 @@ sector_send_dma(uint8_t *buff, uint32_t len)
     /* Re-initialize DMA every transmission */
     init_dma(1);
 
+    /* Point Scatter-Gather list buffer ptr to buff */
+    set_sg_list_buff(buff);
+
     ROM_uDMAChannelTransferSet(SDC_SSI_RX_UDMA_CHAN | UDMA_PRI_SELECT,
                                UDMA_MODE_BASIC,
-                               (void *)(SSI0_BASE + SSI_O_DR),
+                               (void *)(SDC_SSI_BASE + SSI_O_DR),
                                &dummy_rx,
-                               len /*512*/);
+                               len+3 /*512*/);
 
     ROM_uDMAChannelTransferSet(SDC_SSI_TX_UDMA_CHAN | UDMA_PRI_SELECT,
-                               UDMA_MODE_BASIC,
-                               buff,
-                               (void *)(SDC_SSI_BASE + SSI_O_DR),
-                               len);
+                               UDMA_MODE_PER_SCATTER_GATHER,
+                               dma_send_sg_list,
+                               (void *)(SDC_SSI_BASE + SSI_O_DR),/*&ui8ControlTable[SDC_SSI_RX_UDMA_CHAN],*/
+                               sizeof(tDMAControlTable)*3);
 
     /* Initiate DMA txfer */
     ROM_uDMAChannelEnable(SDC_SSI_RX_UDMA_CHAN);
