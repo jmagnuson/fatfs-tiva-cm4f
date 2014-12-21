@@ -80,7 +80,6 @@
 
 #define USE_DMA_TX
 //#define USE_DMA_RX
-//#define USE_SGSET_API
 
 void init_dma(uint8_t send);
 uint32_t sector_send_dma(uint8_t *buff, uint32_t len);
@@ -122,9 +121,7 @@ static
 void set_sg_list_buff(uint8_t* buff)
 {
     /* Snippet out of uDMATaskStructEntry which only sets SrcEndAddr */
-    dma_send_sg_list[1].pvSrcEndAddr = &buff[512-1];
-        //((void *)(&((uint8_t *)(buff))[((512)
-        //<<  ((UDMA_SRC_INC_8) >> 26)) - 1]));
+    dma_send_sg_list[1].pvSrcEndAddr = &buff[511];
 }
 
 // asserts the CS pin to the card
@@ -395,9 +392,8 @@ BOOL xmit_datablock (
     if (token != 0xFD) {    /* Is data token */
         wc = 0;
 
-        token_stat = token;
-
 #if defined(USE_DMA_TX)
+        token_stat = token;
         sector_send_dma((uint8_t*)buff, 512);
 #else
         xmit_spi(token);                    /* Xmit data token */
@@ -882,22 +878,15 @@ sector_send_dma(uint8_t *buff, uint32_t len)
     /* Point Scatter-Gather list buffer ptr to buff */
     set_sg_list_buff(buff);
 
-#if defined(USE_SGSET_API)
     ROM_uDMAChannelTransferSet(SDC_SSI_RX_UDMA_CHAN | UDMA_PRI_SELECT,
                                UDMA_MODE_BASIC,
                                (void *)(SDC_SSI_BASE + SSI_O_DR),
                                &dummy_rx,
-                               len+3 /*512*/);
+                               len+3);
 
-    /*ROM_*/uDMAChannelTransferSet(SDC_SSI_TX_UDMA_CHAN | UDMA_PRI_SELECT,
-                               UDMA_MODE_PER_SCATTER_GATHER,
-                               dma_send_sg_list,
-                               &ui8ControlTable[SDC_SSI_TX_UDMA_CHAN],
-                               (sizeof(dma_send_sg_list)/sizeof(tDMAControlTable))*4);
-#else
     /* Newer method for setting up scatter-gather.  Ref: 'udma_uart_sg.c' */
     uDMAChannelScatterGatherSet(SDC_SSI_TX_UDMA_CHAN, 3, dma_send_sg_list, 1);
-#endif
+
 
     /* Initiate DMA txfer */
     ROM_uDMAChannelEnable(SDC_SSI_RX_UDMA_CHAN);
