@@ -79,7 +79,7 @@
                                  SDC_SSI_FSS)
 
 #define USE_DMA_TX
-//#define USE_DMA_RX
+#define USE_DMA_RX
 
 void init_dma(uint8_t send);
 uint32_t sector_send_dma(uint8_t *buff, uint32_t len);
@@ -117,11 +117,41 @@ static tDMAControlTable dma_send_sg_list[3] =
 
 };
 
+static tDMAControlTable dma_receive_sg_list[3] =
+{
+    /* Token (1) */
+    uDMATaskStructEntry(1, UDMA_SIZE_8,
+                        UDMA_DST_INC_NONE,
+                        (void *)(SDC_SSI_BASE + SSI_O_DR),
+                        UDMA_SRC_INC_NONE, &token_stat,
+                        UDMA_ARB_4, UDMA_MODE_PER_SCATTER_GATHER),
+    /* Sector buffer (512) */
+    uDMATaskStructEntry(512, UDMA_SIZE_8,
+                        UDMA_SRC_INC_NONE,
+                        (void *)(SDC_SSI_BASE + SSI_O_DR),
+                        UDMA_DST_INC_8, 0,
+                        UDMA_ARB_4, UDMA_MODE_PER_SCATTER_GATHER),
+    /* Fake CRC + response (3) */
+    uDMATaskStructEntry(2, UDMA_SIZE_8,
+                        UDMA_SRC_INC_NONE,
+                        (void *)(SDC_SSI_BASE + SSI_O_DR),
+                        UDMA_DST_INC_8, crc_and_response,
+                        UDMA_ARB_4, UDMA_MODE_BASIC) /* BASIC because last task */
+
+};
+
 static
 void set_sg_list_buff(uint8_t* buff)
 {
     /* Snippet out of uDMATaskStructEntry which only sets SrcEndAddr */
     dma_send_sg_list[1].pvSrcEndAddr = &buff[511];
+}
+
+static
+void set_sg_list_rxbuff(uint8_t* buff)
+{
+    /* Snippet out of uDMATaskStructEntry which only sets SrcEndAddr */
+    dma_receive_sg_list[1].pvDstEndAddr = &buff[511];
 }
 
 // asserts the CS pin to the card
@@ -357,15 +387,17 @@ BOOL rcvr_datablock (
     if(token != 0xFE) return FALSE;    /* If not valid data token, retutn with error */
 
 #if defined(USE_DMA_RX)
+        /* Handles data + CRC for now (not token) */
         sector_receive_dma((uint8_t*)buff, 512);
 #else
     do {                            /* Receive the data block into buffer */
         rcvr_spi_m(buff++);
         rcvr_spi_m(buff++);
     } while (btr -= 2);
-#endif
+
     rcvr_spi();                        /* Discard CRC */
     rcvr_spi();
+#endif
 
     return TRUE;                    /* Return with success */
 }
@@ -922,17 +954,18 @@ sector_receive_dma(uint8_t *buff, uint32_t len)
     /* Re-initialize DMA every transmission */
     init_dma(0);
 
-    ROM_uDMAChannelTransferSet(SDC_SSI_RX_UDMA_CHAN | UDMA_PRI_SELECT,
-                               UDMA_MODE_BASIC,
-                               (void *)(SSI0_BASE + SSI_O_DR),
-                               buff,
-                               len /*512*/);
+    /* Point Scatter-Gather list buffer ptr to buff */
+    set_sg_list_rxbuff(buff);
+
+    /* Newer method for setting up scatter-gather.  Ref: 'udma_uart_sg.c' */
+    uDMAChannelScatterGatherSet(SDC_SSI_RX_UDMA_CHAN, 2, (void*)(dma_receive_sg_list+1), 1);
+
 
     ROM_uDMAChannelTransferSet(SDC_SSI_TX_UDMA_CHAN | UDMA_PRI_SELECT,
                                UDMA_MODE_BASIC,
                                &dummy_tx,
                                (void *)(SDC_SSI_BASE + SSI_O_DR),
-                               len);
+                               len+2);
 
     /* Initiate DMA txfer */
     ROM_uDMAChannelEnable(SDC_SSI_RX_UDMA_CHAN);
