@@ -35,12 +35,16 @@
 /* FatFs includes */
 #include "diskio.h"
 
-#if defined (USE_FREERTOS)
+#define USE_FREERTOS
+
+#if defined(USE_FREERTOS)
 /* FreeRTOS Includes */
 #include "FreeRTOS.h"
-#include "task.h"
 #include "queue.h"
 #include "semphr.h"
+
+/* Semaphore for interrupt completion */
+static xSemaphoreHandle sd_int_semphr;
 #endif
 
 /* Definitions for MMC/SDC command */
@@ -874,10 +878,13 @@ SDCSSIIntHandler(void)
 
     if(ui32Mode == UDMA_MODE_STOP /*UDMA_MODE_BASIC*/)
     {
+
+#if defined (USE_FREERTOS)
+        /* Signal transfer completion with semaphore */
+        xSemaphoreGive(sd_int_semphr);
+#else
         /* Signal txfer complete */
         dma_complete = 1;
-#if defined (USE_FREERTOS)
-        /* TODO: Implement RTOS semaphore for process yielding */
 #endif
     }
 
@@ -924,8 +931,11 @@ sector_send_dma(uint8_t *buff, uint32_t len)
     ROM_uDMAChannelEnable(SDC_SSI_RX_UDMA_CHAN);
     ROM_uDMAChannelEnable(SDC_SSI_TX_UDMA_CHAN);
 
+#if defined(USE_FREERTOS)
+    xSemaphoreTake(sd_int_semphr, portMAX_DELAY);
+#else
     while (!dma_complete);
-
+#endif
 
     while(1)
     {
@@ -971,7 +981,11 @@ sector_receive_dma(uint8_t *buff, uint32_t len)
     ROM_uDMAChannelEnable(SDC_SSI_RX_UDMA_CHAN);
     ROM_uDMAChannelEnable(SDC_SSI_TX_UDMA_CHAN);
 
+#if defined(USE_FREERTOS)
+    xSemaphoreTake(sd_int_semphr, portMAX_DELAY);
+#else
     while (!dma_complete);
+#endif
 
     while(1)
     {
@@ -992,6 +1006,13 @@ sector_receive_dma(uint8_t *buff, uint32_t len)
 void
 init_dma(uint8_t send)
 {
+
+#if defined(USE_FREERTOS)
+    /* If interrupt semaphore not created yet, do so now */
+    if (sd_int_semphr == NULL) {
+        sd_int_semphr = xSemaphoreCreateBinary(); // FreeRTOS v8.0
+    }
+#endif
 
     /* Init SPI DMA & SPI interrupt */
     ROM_SSIDMAEnable(SDC_SSI_BASE, SSI_DMA_TX | SSI_DMA_RX);
