@@ -82,6 +82,9 @@
 void init_dma(uint8_t send);
 uint32_t sector_send_dma(uint8_t *buff, uint32_t len);
 uint32_t sector_receive_dma(uint8_t *buff, uint32_t len);
+
+static uint8_t ui8ControlTable[1024] __attribute__ ((aligned(1024)));
+
 static uint32_t dma_complete=0;
 static uint8_t dummy_rx = 0x00;
 static uint8_t dummy_tx = 0xff;
@@ -251,6 +254,10 @@ void power_on (void)
     /* Set DI and CS high and apply more than 74 pulses to SCLK for the card */
     /* to be able to accept a native command. */
     send_initial_clock_train();
+
+    ROM_uDMAControlBaseSet(ui8ControlTable);
+    ROM_IntDisable(SDC_SSI_INT);
+    ROM_SSIDMADisable(SDC_SSI_BASE, SSI_DMA_TX | SSI_DMA_RX);
 
     PowerFlag = 1;
 }
