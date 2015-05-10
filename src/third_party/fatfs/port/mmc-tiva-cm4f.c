@@ -37,10 +37,9 @@
 
 #define USE_FREERTOS
 
-#if defined(USE_FREERTOS)
+#if defined (USE_FREERTOS)
 /* FreeRTOS Includes */
 #include "FreeRTOS.h"
-#include "queue.h"
 #include "semphr.h"
 
 /* Semaphore for interrupt completion */
@@ -82,6 +81,7 @@ static xSemaphoreHandle sd_int_semphr;
 #define SDC_SSI_PINS            (SDC_SSI_TX | SDC_SSI_RX | SDC_SSI_CLK |      \
                                  SDC_SSI_FSS)
 
+#define USE_SCATTERGATHER
 #define USE_DMA_TX
 #define USE_DMA_RX
 
@@ -95,9 +95,11 @@ static uint32_t dma_complete=0;
 static uint8_t dummy_rx = 0x00;
 static uint8_t dummy_tx = 0xff;
 
+#if defined(USE_SCATTERGATHER)
 static uint8_t token_stat = 0xfc;
 static uint8_t *buff_ptr = 0x00; /* Gets changed dynamically */
 static uint8_t crc_and_response[2] = {0xff, 0xff};//, 0xff}; /* only handle crc for now */
+
 static tDMAControlTable dma_send_sg_list[3] =
 {
     /* Token (1) */
@@ -157,6 +159,7 @@ void set_sg_list_rxbuff(uint8_t* buff)
     /* Snippet out of uDMATaskStructEntry which only sets SrcEndAddr */
     dma_receive_sg_list[1].pvDstEndAddr = &buff[511];
 }
+#endif
 
 // asserts the CS pin to the card
 static
@@ -289,7 +292,6 @@ void send_initial_clock_train(void)
 static
 void power_on (void)
 {
-
     /*
      * This doesn't really turn the power on, but initializes the
      * SSI port and pins needed to talk to the card.
@@ -325,12 +327,11 @@ void power_on (void)
     /* to be able to accept a native command. */
     send_initial_clock_train();
 
-    PowerFlag = 1;
-
     ROM_uDMAControlBaseSet(ui8ControlTable);
     ROM_IntDisable(SDC_SSI_INT);
     ROM_SSIDMADisable(SDC_SSI_BASE, SSI_DMA_TX | SSI_DMA_RX);
 
+    PowerFlag = 1;
 }
 
 // set the SSI speed to the max setting
@@ -390,9 +391,13 @@ BOOL rcvr_datablock (
     } while ((token == 0xFF) && Timer1);
     if(token != 0xFE) return FALSE;    /* If not valid data token, retutn with error */
 
-#if defined(USE_DMA_RX)
+#if defined(USE_SCATTERGATHER) && defined(USE_DMA_RX)
         /* Handles data + CRC for now (not token) */
         sector_receive_dma((uint8_t*)buff, 512);
+#elif defined(USE_DMA_RX)
+        sector_receive_dma((uint8_t*)buff, 512);
+        rcvr_spi();
+        rcvr_spi();
 #else
     do {                            /* Receive the data block into buffer */
         rcvr_spi_m(buff++);
@@ -428,9 +433,15 @@ BOOL xmit_datablock (
     if (token != 0xFD) {    /* Is data token */
         wc = 0;
 
-#if defined(USE_DMA_TX)
+#if defined(USE_SCATTERGATHER) && defined(USE_DMA_TX)
         token_stat = token;
         sector_send_dma((uint8_t*)buff, 512);
+#elif defined(USE_DMA_TX)
+        xmit_spi(token);
+        sector_send_dma((uint8_t*)buff, 512);
+        xmit_spi(0xFF);                    /* CRC (Dummy) */
+        xmit_spi(0xFF);
+
 #else
         xmit_spi(token);                    /* Xmit data token */
         do {                            /* Xmit the 512 byte data block to MMC */
@@ -914,6 +925,20 @@ sector_send_dma(uint8_t *buff, uint32_t len)
     /* Re-initialize DMA every transmission */
     init_dma(1);
 
+#if !defined(USE_SCATTERGATHER)
+    ROM_uDMAChannelTransferSet(SDC_SSI_RX_UDMA_CHAN | UDMA_PRI_SELECT,
+                               UDMA_MODE_BASIC,
+                               (void *)(SDC_SSI_BASE + SSI_O_DR),
+                               &dummy_rx,
+                               len);
+
+    ROM_uDMAChannelTransferSet(SDC_SSI_TX_UDMA_CHAN | UDMA_PRI_SELECT,
+                                   UDMA_MODE_BASIC,
+                                   buff,
+                                   (void *)(SDC_SSI_BASE + SSI_O_DR),
+                                   len);
+
+#else
     /* Point Scatter-Gather list buffer ptr to buff */
     set_sg_list_buff(buff);
 
@@ -925,7 +950,7 @@ sector_send_dma(uint8_t *buff, uint32_t len)
 
     /* Newer method for setting up scatter-gather.  Ref: 'udma_uart_sg.c' */
     uDMAChannelScatterGatherSet(SDC_SSI_TX_UDMA_CHAN, 3, dma_send_sg_list, 1);
-
+#endif
 
     /* Initiate DMA txfer */
     ROM_uDMAChannelEnable(SDC_SSI_RX_UDMA_CHAN);
@@ -964,6 +989,20 @@ sector_receive_dma(uint8_t *buff, uint32_t len)
     /* Re-initialize DMA every transmission */
     init_dma(0);
 
+#if !defined(USE_SCATTERGATHER)
+    ROM_uDMAChannelTransferSet(SDC_SSI_RX_UDMA_CHAN | UDMA_PRI_SELECT,
+                               UDMA_MODE_BASIC,
+                               (void *)(SSI0_BASE + SSI_O_DR),
+                               buff,
+                               len);
+
+    ROM_uDMAChannelTransferSet(SDC_SSI_TX_UDMA_CHAN | UDMA_PRI_SELECT,
+                               UDMA_MODE_BASIC,
+                               &dummy_tx,
+                               (void *)(SDC_SSI_BASE + SSI_O_DR),
+                               len);
+
+#else
     /* Point Scatter-Gather list buffer ptr to buff */
     set_sg_list_rxbuff(buff);
 
@@ -976,6 +1015,7 @@ sector_receive_dma(uint8_t *buff, uint32_t len)
                                &dummy_tx,
                                (void *)(SDC_SSI_BASE + SSI_O_DR),
                                len+2);
+#endif
 
     /* Initiate DMA txfer */
     ROM_uDMAChannelEnable(SDC_SSI_RX_UDMA_CHAN);
