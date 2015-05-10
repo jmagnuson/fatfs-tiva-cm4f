@@ -125,9 +125,9 @@ static tDMAControlTable dma_receive_sg_list[3] =
 {
     /* Token (1) */
     uDMATaskStructEntry(1, UDMA_SIZE_8,
-                        UDMA_DST_INC_NONE,
+                        UDMA_SRC_INC_NONE,
                         (void *)(SDC_SSI_BASE + SSI_O_DR),
-                        UDMA_SRC_INC_NONE, &token_stat,
+                        UDMA_DST_INC_NONE, &token_stat,
                         UDMA_ARB_4, UDMA_MODE_PER_SCATTER_GATHER),
     /* Sector buffer (512) */
     uDMATaskStructEntry(512, UDMA_SIZE_8,
