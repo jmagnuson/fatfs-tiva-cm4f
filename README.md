@@ -13,7 +13,7 @@ The target architecture is ARM Cortex-M4, and was developed for TI's
 Currently, there are a number of preprocessor functionality switches in the driver:
 - `USE_FREERTOS` - Use semaphore-based blocking for read and write operations.
 - `USE_DMA_TX` - Use DMA-based write functions.
-- `USE_DMA-RX` - Use DMA-based read functions.
+- `USE_DMA_RX` - Use DMA-based read functions.
 - `USE_SCATTERGATHER` - Use scatter-gather (DMA subset functionality) for DMA-based operations.
 
 It should be noted that for simplicity, the driver initializes the uDMAControlTable itself.  If the application already does this, then the two lines:
