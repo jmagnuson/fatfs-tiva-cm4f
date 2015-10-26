@@ -393,9 +393,9 @@ BOOL rcvr_datablock (
 
 #if defined(USE_SCATTERGATHER) && defined(USE_DMA_RX)
         /* Handles data + CRC for now (not token) */
-        sector_receive_dma((uint8_t*)buff, 512);
+        sector_receive_dma((uint8_t*)buff, btr);
 #elif defined(USE_DMA_RX)
-        sector_receive_dma((uint8_t*)buff, 512);
+        sector_receive_dma((uint8_t*)buff, btr);
         rcvr_spi();
         rcvr_spi();
 #else
