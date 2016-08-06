@@ -95,6 +95,17 @@ static uint32_t dma_complete=0;
 static uint8_t dummy_rx = 0x00;
 static uint8_t dummy_tx = 0xff;
 
+void set_ssi_data_width(uint32_t ui32Base, uint32_t ui32dataWidth) {
+
+    ui32dataWidth--;
+
+    uint32_t ui32Idx=0;
+    for(; ui32Idx < 4; ui32Idx++){
+        HWREGBITW(ui32Base + SSI_O_CR0, 3 - ui32Idx) = (ui32dataWidth >> (3 - ui32Idx)) & 1;
+    }
+
+}
+
 #if defined(USE_SCATTERGATHER)
 static uint8_t token_stat = 0xfc;
 static uint8_t *buff_ptr = 0x00; /* Gets changed dynamically */
@@ -207,6 +218,17 @@ void xmit_spi(BYTE dat)
     ROM_SSIDataGet(SDC_SSI_BASE, &ui32RcvDat); /* flush data read during the write */
 }
 
+static
+void xmit_spi16(WORD dat)
+{
+    uint32_t ui32RcvDat;
+
+    ROM_SSIDataPut(SDC_SSI_BASE, dat); /* Write the data to the tx fifo */
+
+    ROM_SSIDataGet(SDC_SSI_BASE, &ui32RcvDat); /* flush data read during the write */
+}
+
+
 
 /*-----------------------------------------------------------------------*/
 /* Receive a byte from MMC via SPI  (Platform dependent)                 */
@@ -223,12 +245,28 @@ BYTE rcvr_spi (void)
 
     return (BYTE)ui32RcvDat;
 }
+static
+WORD rcvr_spi16 (void)
+{
+    uint32_t ui32RcvDat;
 
+    ROM_SSIDataPut(SDC_SSI_BASE, 0xFFFF); /* write dummy data */
+
+    ROM_SSIDataGet(SDC_SSI_BASE, &ui32RcvDat); /* read data frm rx fifo */
+
+    return (WORD)ui32RcvDat;
+}
 
 static
 void rcvr_spi_m (BYTE *dst)
 {
     *dst = rcvr_spi();
+}
+
+static
+void rcvr_spi_m16 (WORD *dst)
+{
+    *dst = rcvr_spi16();
 }
 
 /*-----------------------------------------------------------------------*/
@@ -383,7 +421,7 @@ BOOL rcvr_datablock (
 )
 {
     BYTE token;
-
+    WORD dat16;
 
     Timer1 = 100;
     do {                            /* Wait for data packet in timeout of 100ms */
@@ -399,10 +437,18 @@ BOOL rcvr_datablock (
         rcvr_spi();
         rcvr_spi();
 #else
+
+    /* Set data width to 16 bits */
+    set_ssi_data_width(SDC_SSI_BASE, 16);
+
     do {                            /* Receive the data block into buffer */
-        rcvr_spi_m(buff++);
-        rcvr_spi_m(buff++);
+        rcvr_spi_m16(&dat16);
+        *buff++ = (BYTE)((dat16) >> 8);
+        *buff++ = (BYTE)((dat16) & 0xFF);
     } while (btr -= 2);
+
+    /* Set data width to 8 bits */
+    set_ssi_data_width(SDC_SSI_BASE, 8);
 
     rcvr_spi();                        /* Discard CRC */
     rcvr_spi();
@@ -425,7 +471,7 @@ BOOL xmit_datablock (
 )
 {
     BYTE resp, wc;
-
+    WORD dat16;
 
     if (wait_ready() != 0xFF) return FALSE;
 
@@ -444,10 +490,18 @@ BOOL xmit_datablock (
 
 #else
         xmit_spi(token);                    /* Xmit data token */
+
+        /* Set data width to 16 bits */
+        set_ssi_data_width(SDC_SSI_BASE, 16);
+
         do {                            /* Xmit the 512 byte data block to MMC */
-            xmit_spi(*buff++);
-            xmit_spi(*buff++);
+            dat16 = (*buff++) << 8;
+            dat16 |= (*buff++);
+            xmit_spi16(dat16);
         } while (--wc);
+
+        /* Set data width to 8 bits */
+        set_ssi_data_width(SDC_SSI_BASE, 8);
 
         xmit_spi(0xFF);                    /* CRC (Dummy) */
         xmit_spi(0xFF);
