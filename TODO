@@ -1,0 +1,14 @@
+
+- Update FreeRTOS to 8.2.1 (now contains CM4F port)
+
+- Investigate SPI data widths
+
+- Add switches/defines for
+    - RTOS
+    - DMA
+    - Scatter-gather DMA
+    - Data width
+ 
+- Investigate DMA data width
+
+- Add disk_timerproc to tick hook!

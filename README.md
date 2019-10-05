@@ -25,6 +25,9 @@ ROM_uDMAControlBaseSet(ui8ControlTable);
 ```
 should be commented out in the driver code.
 
+Finally, one interrupt handler `SDCSSIIntHandler` exists in the driver which is assigned to `SSI0`, and must be
+reflected in the interrupt vector.
+
 ## Benchmarks
 
 Micro-benchmark tests were performed with various modifications to the driver to determine how much

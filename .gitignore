@@ -1,3 +1,5 @@
 *.bak
 *~
 *.swp
+CMakeLists.txt
+cmake-build-debug
