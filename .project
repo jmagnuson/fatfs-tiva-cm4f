@@ -35,11 +35,6 @@
 			<type>1</type>
 			<locationURI>SW_ROOT/utils/ustdlib.c</locationURI>
 		</link>
-		<link>
-			<name>third_party/fatfs/port/mmc-tiva-cm4f.c</name>
-			<type>1</type>
-			<location>C:/Users/jon/workspace_v6/fatfs-tiva-cm4f/src/third_party/fatfs/port/mmc-tiva-cm4f.c</location>
-		</link>
 	</linkedResources>
 	<variableList>
 		<variable>
